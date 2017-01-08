@@ -43,8 +43,15 @@ class mqtt_client::Mqpp {
     std::queue<protocol::Message> inqueue;
 
     std::function<void(ConnectionState, DisconnectReason)> connect_status_callback;  
+    std::function<void(LogLevel, std::string)> logging_callback;
     
     std::chrono::time_point<std::chrono::steady_clock> ctrl_event, now;
+
+    void log(LogLevel lvl, std::string text) {
+        if(logging_callback) {
+            logging_callback(lvl, text);
+        }
+    }
 
 public:
     Mqpp() : connstate(CONNSTATE::NOT_CONNECTED) {
@@ -57,24 +64,29 @@ public:
     {
         // FIXME: what should happen if we are already connected etc?
         if(0 == sock.connect_socket(host, port, bind_ip)) {  // FIXME: how to do this asynchronously?
-            protocol::Message msg = protocol::build_connect_message("TestID");
-            sock.send(msg);
+            protocol::Message msg("TestID", std::chrono::seconds(20), "", "", CleanSession::yes);
+            if(sock.send(msg)) {
+                log(LogLevel::warn, "Couldn't send CONNECT message (socket send failed)");
+                return 1;
+            }
             ctrl_event = std::chrono::steady_clock::now();
             connstate = CONNSTATE::CONNECTION_PENDING;
+            log(LogLevel::info, "Sent CONNECT message, connstate is now pending");
             return 0;
         }
+        log(LogLevel::warn, "Can't open socket or TCP connection");
         return 1;
     }
 
     int publish(std::string topic, std::string payload, QoS qos, Retain retain) {
         if(connstate == CONNSTATE::CONNECTED) { // FIXME: allow this later, once we have a queue || CONNSTATE::CONNECTION_PENDING)
             if(qos == QoS::at_most_once) {
-                protocol::Message msg = protocol::build_publish_message(topic, payload, qos, retain);
+                protocol::Message msg(topic, payload, qos, retain);
                 sock.send(msg);
                 // FIXME: check mqtt spec: do we update the ping timer (ctrl_event) here?
                 return 0;
             } else {
-                std::cout << "QoS Not implemented yet!" << std::endl;
+                log(LogLevel::error, "QoS Not implemented yet!");
                 exit(1);
             }
         } else {
@@ -86,13 +98,19 @@ public:
         connect_status_callback = cb;
     }
 
+    void set_logging_callback(const std::function<void(LogLevel, std::string)> cb, LogLevel lvl) {
+        logging_callback = cb;
+    }
+
     int loop() {
         // first receive inbound messages
         switch(connstate) {
             case CONNSTATE::CONNECTION_PENDING: 
             case CONNSTATE::CONNECTED:
             case CONNSTATE::PING_PENDING:
-                    sock.receive(inqueue);
+                    if(sock.receive(inqueue)) {
+                        log(LogLevel::trace, "Received and enqueued a Message from the Broker");
+                    }
                 break;
             default:
                 break;
@@ -107,15 +125,15 @@ public:
             case CONNSTATE::CONNECTION_PENDING: 
             case CONNSTATE::PING_PENDING:
                 if (ctrl_timer > std::chrono::seconds(1)) {
-                    std::cout << "Connection attempts timed out (no CONNACK)" << std::endl;
+                    log(LogLevel::warn, "Connection attempts timed out (no CONNACK)");
                     exit(1);
                 }
                 break;
             case CONNSTATE::CONNECTED:
                 if(ctrl_timer > std::chrono::seconds(5)) {
-                    std::cout << "Sending PINGREQ" << std::endl;
+                    log(LogLevel::info, "Sending PINGREQ");
                     ctrl_event = now;
-                    sock.send(protocol::build_pingreq_message());
+                    sock.send(protocol::Message());
                 }
                 break;
             default:
@@ -128,13 +146,12 @@ public:
 
         // finally serve global event queue
         if(!inqueue.empty()) {
-            std::cout << "*" << std::endl;
             protocol::Message msg = inqueue.front();
             inqueue.pop();
             switch(connstate) {
                 case CONNSTATE::CONNECTION_PENDING: {
-                    switch(msg.type) {
-                        case protocol::MSGTYPE::CONNACK: {
+                    switch(msg.type()) {
+                        case protocol::MsgType::connack: {
                             connstate = CONNSTATE::CONNECTED;
                             if(connect_status_callback) {
                                 connect_status_callback(ConnectionState::open, DisconnectReason::none);
@@ -142,7 +159,7 @@ public:
                         }
                         break;
                         default: {
-                            std::cout << "Unexpected Message in CONNECTION_PENDING state" << std::endl;
+                            log(LogLevel::warn, "Unexpected Message in CONNECTION_PENDING state");
                         }
                         break;
                     }

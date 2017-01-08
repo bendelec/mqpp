@@ -24,7 +24,8 @@ namespace mqpp {
 
 mqtt_client::mqtt_client() : impl{new(Mqpp)} {}
 
-mqtt_client::~mqtt_client() {}
+mqtt_client::~mqtt_client() {
+}
 
 void mqtt_client::connect(  const std::string &host, 
                             const int port, 
@@ -39,6 +40,12 @@ void mqtt_client::publish(  std::string topic,
                             Retain retain) 
 {
     impl->publish(topic, payload, qos, retain);
+}
+
+void mqtt_client::set_logging_callback(  const std::function<void(LogLevel, std::string)> cb, 
+                            LogLevel lvl)
+{
+    impl->set_logging_callback(cb, lvl);
 }
 
 void mqtt_client::set_connect_status_callback(const std::function<void(ConnectionState, DisconnectReason)> &cb) {

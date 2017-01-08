@@ -18,122 +18,150 @@
  */
 
 #pragma once
-
-#include <iostream>
+#include <vector>
 
 #include "mqpp.h"
 
 namespace mqpp {
 namespace protocol {
 
-enum class MSGTYPE : uint8_t {
+enum class MsgType : uint8_t {
     // message type is stored in high nibble of the first byte of
     // a message (section 2.2 of mqtt 3.1.1 oasis standard)
-    CONNECT = 0x10,
-    CONNACK = 0x20,
-    PUBLISH = 0x30,
-    PUBACK = 0x40,
-    PUBREC = 0x50,
-    PUBREL = 0x60,
-    PUBCOMP = 0x70,
-    SUBSCRIBE = 0x80,
-    SUBACK = 0x90,
-    UNSUBSCRIBE = 0xa0,
-    UNSUBACK = 0xb0,
-    PINGREQ = 0xc0,
-    PINGRESP = 0xd0,
-    DISCONNECT = 0xe0
+    connect = 0x10,
+    connack = 0x20,
+    publish = 0x30,
+    puback = 0x40,
+    pubrec = 0x50,
+    pubrel = 0x60,
+    pubcomp = 0x70,
+    subscribe = 0x80,
+    suback = 0x90,
+    unsubscribe = 0xa0,
+    unsuback = 0xb0,
+    pingreq = 0xc0,
+    pingresp = 0xd0,
+    disconnect = 0xe0
 };
-
-inline constexpr MSGTYPE
-operator| (MSGTYPE A, QoS B) {
-    return static_cast<MSGTYPE>(static_cast<uint8_t>(A) | static_cast<uint8_t>(B));
-}
-
-inline constexpr MSGTYPE
-operator| (MSGTYPE A, Retain B) {
-    return static_cast<MSGTYPE>(static_cast<uint8_t>(A) | static_cast<uint8_t>(B));
-}
 
 /**
  * Preliminary, I'm not yet sure what the best abstraction is
  */
-struct Message {
-    MSGTYPE type;
-    std::string length;     // length field in mqtt big endian base 128 notation
-    std::string remainder;  // raw message without msgtype and remaining_length parts
+class Message {
+    std::vector<uint8_t> buf;
+    size_t start;
+
+public:
+
+    const uint8_t *data() const {
+        return buf.data();
+    }
+        
+    size_t length() const {
+        return buf.size();
+    }
+
+    void append_string(std::string s) {
+        buf.push_back(s.size() >> 8);
+        buf.push_back(s.size() & 0xff);
+        std::copy(s.begin(), s.end(), std::back_inserter(buf));
+    }
+
+    /**
+     * construct a mqtt message from a buffer (for reception)
+     */
+    Message(    const std::vector<uint8_t> buf) 
+        : buf(buf), start(0)
+    {
+    }
+
+    /**
+     * construct a mqtt connect message
+     */
+    Message(    const std::string &client_id,
+                const std::chrono::duration<int> keepalive,
+                const std::string &username,
+                const std::string &passwd,
+                const CleanSession clean_session ) 
+    {
+        int remlength = 6 + 1 + 1 + 2 + (2 + client_id.size());
+        if(!username.empty()) remlength += (2 + username.size());
+        if(!passwd.empty()) remlength += (2 + passwd.size());
+
+        buf.push_back(static_cast<uint8_t>(MsgType::connect));
+        buf.push_back(remlength & 0x7f);      // FIXME: call calculating method here
+        buf.reserve(remlength + 5);           // max possible length for fixed header
+        
+        append_string("MQTT");
+        buf.push_back(4);   // protocol level, 4 for mqtt v3.1.1
+        buf.push_back(2);   // connect flags
+        buf.push_back(keepalive.count() >> 8);    
+        buf.push_back(keepalive.count() & 0xff);
+        append_string(client_id);
+        if(!username.empty()) append_string(username);
+        if(!passwd.empty()) append_string(passwd);
+    }
+
+    /**
+     * construct a mqtt publish message
+     */
+    Message(    const std::string &topic,
+                const std::string &payload,
+                const QoS qos,
+                const Retain retain)
+        : start(4)
+    {
+        int remlength = 2 + topic.size() + payload.size();
+        buf.push_back(      static_cast<uint8_t>(MsgType::publish) 
+                        |   static_cast<uint8_t>(qos)
+                        |   static_cast<uint8_t>(retain));
+        buf.push_back(remlength & 0x7f);      // FIXME: call calculating method here
+        buf.reserve(remlength + 5);
+        buf[start] = 0;  // move buf.back() position
+
+        append_string(topic);
+        if(!payload.empty()) std::copy(payload.begin(), payload.end(), std::back_inserter(buf));
+    }
+
+    /**
+     * construct a mqtt pingreq message
+     */
+    Message(    void ) : start(0)
+    {
+        buf.push_back(static_cast<uint8_t>(MsgType::pingreq));
+        buf.push_back(0);
+    }
+
+    MsgType type() {
+        return static_cast<MsgType>(buf[start] & 0xf0);
+    }
+
+    static int get_missing_length(const std::vector<uint8_t> &buf) {
+        // example "pseudo code" directly from the standard document:
+        // multiplier = 1
+        // value = 0
+        // do
+        //    encodedByte = 'next byte from stream'
+        //    value += (encodedByte AND 127) * multiplier
+        //    multiplier *= 128
+        //    if (multiplier > 128*128*128)
+        //       throw Error(Malformed Remaining Length)
+        // while ((encodedByte AND 128) != 0)
+
+        int pos = 1;
+        int length = 0;
+        int step = 0;
+        
+        do {
+            length += (buf[pos] & 127) * 1 << (step * 7);
+            ++step;
+            if(step > 3) {
+                return -1;
+            }
+        } while (buf[pos] & 128);
+        return length - 3 + step;
+    }
 };
-
-/**
- * return a mqtt big endian base 128 notation length field as a string
- *
- * The string length will be between 1 and 4 bytes, encoding a length of
- * 0..0x7fffffff
- */
-inline std::string build_length_field(size_t s) {
-    std::string ss;
-    if(s < 128) {
-        ss.push_back(s);
-    } else {
-        std::cout << "Size fields for size > 127 not yet implemented" << std::endl;
-        exit(1);
-    }
-    return ss;
-}
-
-/**
- * create a mqtt string with 16 bit length
- */
-inline std::string build_mqtt_string(std::string s) {
-    if(s.size() > 65635) {
-        std::cout << "Error: String longer than 65535 encountered" << std::endl;
-        return std::string{};
-    }
-    std::string ss;
-    ss.push_back(s.size() >> 8);
-    ss.push_back(s.size() & 0xff);
-    ss.append(s);
-    return ss;
-}
-
-/**
- * build a mqtt connect message
- */
-inline Message build_connect_message(std::string id) {
-    Message msg;
-    msg.type = MSGTYPE::CONNECT;
-    msg.remainder = build_mqtt_string("MQTT");
-    msg.remainder.push_back(4);   // protocol level 4 (for mqtt v3.1.1)
-    msg.remainder.push_back(2);   // connect flags
-    msg.remainder.push_back(0);   // keepalive MSB
-    msg.remainder.push_back(5);   // keepalive LSB
-    msg.remainder.append(build_mqtt_string(id));
-    msg.length = build_length_field(msg.remainder.size());
-    return msg;
-}
-
-/**
- * build a mqtt publish message
- */
-inline Message build_publish_message(std::string topic, std::string payload, QoS qos, Retain retain) {
-    Message msg;
-    msg.type = MSGTYPE::PUBLISH | qos | retain;
-    msg.remainder=build_mqtt_string(topic); 
-    msg.remainder.append(payload);
-    msg.length = build_length_field(msg.remainder.size());
-    return msg;
-}
-
-/**
- * build a mqtt pingreq message
- */
-inline Message build_pingreq_message() {
-    Message msg;
-    msg.type = MSGTYPE::PINGREQ;
-    msg.remainder = "";
-    msg.length = build_length_field(msg.remainder.size());
-    return msg;
-}
 
 }   // namespace protocol
 }   // namespace mqpp

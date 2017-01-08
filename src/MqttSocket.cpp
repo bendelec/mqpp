@@ -45,7 +45,7 @@ int MqttSocket::connect_socket( const std::string &host,
 
     status = getaddrinfo(host.c_str(), "1883", &hints, &servinf);
     if(status != 0) {
-        std::cout << "Error resolving hostname" << std::endl;
+//        std::cout << "Error resolving hostname" << std::endl;
         exit(1);
     }
     // FIXME: Do proper error handling
@@ -55,7 +55,7 @@ int MqttSocket::connect_socket( const std::string &host,
 
     sock = socket(servinf->ai_family, servinf->ai_socktype, servinf->ai_protocol);
     if (sock < 0) {
-        std::cout << "Failed to acquire socket: " << strerror(errno) << std::endl;
+//        std::cout << "Failed to acquire socket: " << strerror(errno) << std::endl;
         exit(1);
     }
 
@@ -68,15 +68,11 @@ int MqttSocket::connect_socket( const std::string &host,
 }
 
 int MqttSocket::send(const protocol::Message &msg) {
-    size_t bytes_sent = 0;
     // FIXME: Do proper error handling and handling of incomplete
     // sends (bytes_send < msg.size())
-    bytes_sent = ::send(sock, &msg.type, 1, 0);
-    bytes_sent = ::send(sock, msg.length.c_str(), msg.length.size(), 0);
-    bytes_sent = ::send(sock, msg.remainder.c_str(), msg.remainder.size(), 0);
-    if(bytes_sent != msg.remainder.size()) {
-        std::cout << "Message send incomplete, resuming/continuing not yet implemented. aborting." << std::endl;
-        exit(1);
+    size_t bytes_sent = ::send(sock, msg.data(), msg.length(), 0);
+    if(bytes_sent != msg.length()) {
+        return -1;
     }
     return 0;
 } 
@@ -88,77 +84,26 @@ int MqttSocket::receive(std::queue<protocol::Message> &inqueue) {
     // FIXME: Do proper error handling and handling of incomplete
     // messages (kind of "suspend" reception of message, return
     // 0, and resume/complete reception on the next call
-    protocol::Message msg;
 
-    while(1) {
-        // receive one mqtt message if one is available
-        uint8_t c;
+    std::vector<uint8_t> buf(5);
+    int result = recv(sock, buf.data(), buf.size(), 0);
+    if(result != -1) buf.resize(result);
+    if(!handle_recv_return(result)) return 0;
 
-        // receive first byte and look for message type
-        if(!handle_recv_return(recv(sock, &c, 1, 0))) return 0;
-
-        switch(c & 0xf0) {
-            case 0x20:  msg.type = protocol::MSGTYPE::CONNACK;
-                        std::cout << "Receiving CONNACK ";
-                break;
-            case 0xd0:  msg.type = protocol::MSGTYPE::PINGRESP;
-                        std::cout << "Receiving PINGRESP ";
-                break;
-            default:
-                std::cout << "Received inexpected message type: " << (int)c << std::endl;
-                // FIXME: push disconnect event instead of exiting;
-                exit(1);
-                break;
-        }
-        
-        // now get remaining length
-
-        // example "pseudo code" directly from the standard document:
-        // multiplier = 1
-        // value = 0
-        // do
-        //    encodedByte = 'next byte from stream'
-        //    value += (encodedByte AND 127) * multiplier
-        //    multiplier *= 128
-        //    if (multiplier > 128*128*128)
-        //       throw Error(Malformed Remaining Length)
-        // while ((encodedByte AND 128) != 0)
-
-        int length = 0;
-        int multiplier = 1;
-
-        while(handle_recv_return(recv(sock, &c, 1, 0))) {
-            msg.length.push_back(c);
-            length += (c & 127) * multiplier;
-            multiplier *= 128;
-            if(multiplier > 128*128*128) {
-                std::cout << "Received illegal remaining length field." << std::endl;
-                //FIXME: push disconnect event instead of exiting
-                exit(1);
-            }
-            if(!(c & 128)) break;
-        } 
-
-        std::cout << "- length is " << length;
-        
-        // now get the rest of the message
-        if(length > 0) {
-            msg.remainder.resize(length, 0);
-            if(int bytes_recvd = handle_recv_return(recv(sock, const_cast<char*>(msg.remainder.data()), length, 0))) {
-                inqueue.push(msg);
-                std::cout << " - received " << bytes_recvd << " bytes";
-                if(length == bytes_recvd) std::cout << " - done." << std::endl;
-                return 1;
-            } else {
-                return 0;
-            }
-        } else {
-            std::cout << " - done." << std::endl;
-            return 0;
-        }
+    int missing = protocol::Message::get_missing_length(buf);
+    
+    if(missing > 0) {
+        buf.resize(result + missing);
+        result = recv(sock, buf.data()+5, buf.size()-5, 0);
+        if(result != -1) buf.resize(result);
+        if(!handle_recv_return(result)) return 0;
     }
-}
+            
+    protocol::Message msg(buf);
 
+    inqueue.push(msg);
+    return 1;
+}
 
 }   // namespace detail
 }   // namespace mqpp

@@ -67,14 +67,14 @@ private:
     int handle_recv_return(int in) {
         if (in == 0) {   // socket was closed
             // FIXME: push disconnect event here
-            std::cout << "Socket was closed." << std::endl;
+//            std::cout << "Socket was closed." << std::endl;
             exit(0);
         } if (in == -1) {
             if(errno == EAGAIN || errno == EWOULDBLOCK) {
                 return 0; // no error, just no data.
             } else {
                 // FIXME: push disconnect event here
-                std::cout << "Socket error:" << strerror(errno) << std::endl;
+ //               std::cout << "Socket error:" << strerror(errno) << std::endl;
                 exit(0);
             }
         }

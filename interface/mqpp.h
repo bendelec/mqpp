@@ -19,10 +19,15 @@
 #pragma once
 
 #include <string>
-#include <memory>
 #include <chrono>
+#include <memory>
 
 namespace mqpp {
+
+enum class CleanSession : uint8_t {
+    no  = 0x00 << 1,
+    yes = 0x01 << 1
+};
 
 /**
  * Retain messages on the broker when publishing?
@@ -67,6 +72,13 @@ enum class DisconnectReason {
     
 };
 
+enum class LogLevel {
+    trace,
+    info,
+    warn,
+    error
+};
+
 /**
  * All api is meant to be asynchronous, so typically results  of
  * api calls will be passed to the client by way of callbacks.
@@ -85,6 +97,8 @@ public:
     
     void set_reconnect_opts(int first_delay_s = 1, int max_delay_s = 64, bool exponential_delay = true);
     void set_qos_opts(int retry_s = 10, int max_inflight_messages = 0);
+
+    void set_logging_callback(const std::function<void(LogLevel, std::string)> cb, LogLevel lvl = LogLevel::warn);
 
     void set_connect_status_callback(const std::function<void(ConnectionState, DisconnectReason)> &cb);
     void set_message_callback();

@@ -8,8 +8,26 @@ void connect_status_callback(mqpp::ConnectionState state, mqpp::DisconnectReason
     std::cout << "Oh! I reveived a connect status callback." << std::endl;
 }
 
+void logging_callback(mqpp::LogLevel lvl, std::string text) {
+    switch (lvl) {
+        case mqpp::LogLevel::error: 
+            std::cerr << "*** MQPP ERROR: " << text << std::endl;
+            break;
+        case mqpp::LogLevel::warn: 
+            std::cout << "--- MQPP WARNING: " << text << std::endl;
+            break;
+        case mqpp::LogLevel::info: 
+            std::cout << "    mqpp info: " << text << std::endl;
+            break;
+        case mqpp::LogLevel::trace: 
+            std::cout << "    mqpp trace: " << text << std::endl;
+            break;
+    }
+}
+
 int main(int argc, char *argv[]) {
     mqpp::mqtt_client instance;
+    instance.set_logging_callback(logging_callback);
     instance.set_connect_status_callback(connect_status_callback);
     instance.connect();
     int count = 0;
