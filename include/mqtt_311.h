@@ -49,7 +49,6 @@ enum class MsgType : uint8_t {
  */
 class Message {
     std::vector<uint8_t> buf;
-    size_t start;
 
 public:
 
@@ -70,8 +69,8 @@ public:
     /**
      * construct a mqtt message from a buffer (for reception)
      */
-    Message(    const std::vector<uint8_t> buf) 
-        : buf(buf), start(0)
+    explicit Message(    const std::vector<uint8_t> &buf) 
+        : buf(buf)
     {
     }
 
@@ -109,7 +108,6 @@ public:
                 const std::string &payload,
                 const QoS qos,
                 const Retain retain)
-        : start(4)
     {
         int remlength = 2 + topic.size() + payload.size();
         buf.push_back(      static_cast<uint8_t>(MsgType::publish) 
@@ -117,8 +115,6 @@ public:
                         |   static_cast<uint8_t>(retain));
         buf.push_back(remlength & 0x7f);      // FIXME: call calculating method here
         buf.reserve(remlength + 5);
-        buf[start] = 0;  // move buf.back() position
-
         append_string(topic);
         if(!payload.empty()) std::copy(payload.begin(), payload.end(), std::back_inserter(buf));
     }
@@ -126,14 +122,14 @@ public:
     /**
      * construct a mqtt pingreq message
      */
-    Message(    void ) : start(0)
+    Message(    void )
     {
         buf.push_back(static_cast<uint8_t>(MsgType::pingreq));
         buf.push_back(0);
     }
 
     MsgType type() {
-        return static_cast<MsgType>(buf[start] & 0xf0);
+        return static_cast<MsgType>(buf[0] & 0xf0);
     }
 
     static int get_missing_length(const std::vector<uint8_t> &buf) {

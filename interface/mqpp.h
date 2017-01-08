@@ -98,7 +98,7 @@ public:
     void set_reconnect_opts(int first_delay_s = 1, int max_delay_s = 64, bool exponential_delay = true);
     void set_qos_opts(int retry_s = 10, int max_inflight_messages = 0);
 
-    void set_logging_callback(const std::function<void(LogLevel, std::string)> cb, LogLevel lvl = LogLevel::warn);
+    void set_logging_callback(const std::function<void(LogLevel, std::string)> &cb, LogLevel lvl = LogLevel::warn);
 
     void set_connect_status_callback(const std::function<void(ConnectionState, DisconnectReason)> &cb);
     void set_message_callback();

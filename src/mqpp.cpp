@@ -42,7 +42,7 @@ void mqtt_client::publish(  std::string topic,
     impl->publish(topic, payload, qos, retain);
 }
 
-void mqtt_client::set_logging_callback(  const std::function<void(LogLevel, std::string)> cb, 
+void mqtt_client::set_logging_callback(  const std::function<void(LogLevel, std::string)> &cb, 
                             LogLevel lvl)
 {
     impl->set_logging_callback(cb, lvl);

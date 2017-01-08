@@ -40,135 +40,35 @@ class mqtt_client::Mqpp {
     } connstate;
 
     detail::MqttSocket sock;
-    std::queue<protocol::Message> inqueue;
+    std::deque<protocol::Message> inqueue;
 
     std::function<void(ConnectionState, DisconnectReason)> connect_status_callback;  
     std::function<void(LogLevel, std::string)> logging_callback;
     
     std::chrono::time_point<std::chrono::steady_clock> ctrl_event, now;
 
-    void log(LogLevel lvl, std::string text) {
-        if(logging_callback) {
-            logging_callback(lvl, text);
-        }
-    }
 
 public:
-    Mqpp() : connstate(CONNSTATE::NOT_CONNECTED) {
-    }
+    Mqpp();
 
     int connect(    const std::string &host, 
                     const int port, 
                     const std::chrono::duration<int> keepalive,
-                    const std::string &bind_ip) 
-    {
-        // FIXME: what should happen if we are already connected etc?
-        if(0 == sock.connect_socket(host, port, bind_ip)) {  // FIXME: how to do this asynchronously?
-            protocol::Message msg("TestID", std::chrono::seconds(20), "", "", CleanSession::yes);
-            if(sock.send(msg)) {
-                log(LogLevel::warn, "Couldn't send CONNECT message (socket send failed)");
-                return 1;
-            }
-            ctrl_event = std::chrono::steady_clock::now();
-            connstate = CONNSTATE::CONNECTION_PENDING;
-            log(LogLevel::info, "Sent CONNECT message, connstate is now pending");
-            return 0;
-        }
-        log(LogLevel::warn, "Can't open socket or TCP connection");
-        return 1;
-    }
+                    const std::string &bind_ip); 
+    int publish(std::string topic, std::string payload, QoS qos, Retain retain);
 
-    int publish(std::string topic, std::string payload, QoS qos, Retain retain) {
-        if(connstate == CONNSTATE::CONNECTED) { // FIXME: allow this later, once we have a queue || CONNSTATE::CONNECTION_PENDING)
-            if(qos == QoS::at_most_once) {
-                protocol::Message msg(topic, payload, qos, retain);
-                sock.send(msg);
-                // FIXME: check mqtt spec: do we update the ping timer (ctrl_event) here?
-                return 0;
-            } else {
-                log(LogLevel::error, "QoS Not implemented yet!");
-                exit(1);
-            }
-        } else {
-            return -1;
-        }
-    }
-
-    void set_connect_status_callback(const std::function<void(ConnectionState, DisconnectReason)> cb) {
+    inline void set_connect_status_callback(const std::function<void(ConnectionState, DisconnectReason)> &cb) {
         connect_status_callback = cb;
     }
 
-    void set_logging_callback(const std::function<void(LogLevel, std::string)> cb, LogLevel lvl) {
+    inline void set_logging_callback(const std::function<void(LogLevel, std::string)> &cb, LogLevel lvl) {
         logging_callback = cb;
     }
 
-    int loop() {
-        // first receive inbound messages
-        switch(connstate) {
-            case CONNSTATE::CONNECTION_PENDING: 
-            case CONNSTATE::CONNECTED:
-            case CONNSTATE::PING_PENDING:
-                    if(sock.receive(inqueue)) {
-                        log(LogLevel::trace, "Received and enqueued a Message from the Broker");
-                    }
-                break;
-            default:
-                break;
-        }
+    int loop();
 
-        // then check pending qos messages
-        
-        // then check timer events
-        auto now = std::chrono::steady_clock::now();
-        auto ctrl_timer = now - ctrl_event;
-        switch(connstate) {
-            case CONNSTATE::CONNECTION_PENDING: 
-            case CONNSTATE::PING_PENDING:
-                if (ctrl_timer > std::chrono::seconds(1)) {
-                    log(LogLevel::warn, "Connection attempts timed out (no CONNACK)");
-                    exit(1);
-                }
-                break;
-            case CONNSTATE::CONNECTED:
-                if(ctrl_timer > std::chrono::seconds(5)) {
-                    log(LogLevel::info, "Sending PINGREQ");
-                    ctrl_event = now;
-                    sock.send(protocol::Message());
-                }
-                break;
-            default:
-                break;
-        }
-        // then serve outbound msg queue
-        // FIXME: currently not necessary/implemented, since outbound
-        // messages are sent directly without enqueuing, blocking the caller.
-        // This will be fixed later
-
-        // finally serve global event queue
-        if(!inqueue.empty()) {
-            protocol::Message msg = inqueue.front();
-            inqueue.pop();
-            switch(connstate) {
-                case CONNSTATE::CONNECTION_PENDING: {
-                    switch(msg.type()) {
-                        case protocol::MsgType::connack: {
-                            connstate = CONNSTATE::CONNECTED;
-                            if(connect_status_callback) {
-                                connect_status_callback(ConnectionState::open, DisconnectReason::none);
-                            }
-                        }
-                        break;
-                        default: {
-                            log(LogLevel::warn, "Unexpected Message in CONNECTION_PENDING state");
-                        }
-                        break;
-                    }
-                    break;
-                }
-            }
-        }
-        return 0;
-    }
+private:
+    void log(LogLevel lvl, std::string text);
 };
 
 }   // namespace mqpp

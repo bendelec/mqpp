@@ -21,7 +21,6 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
-#include <string>
 #include <thread>
 #include <chrono>
 
@@ -32,7 +31,9 @@ namespace detail {
 
 using namespace std;
 
-int MqttSocket::connect_socket( const std::string &host, 
+MqttSocket::MqttSocket() : sock(-1) {}
+
+SocketState MqttSocket::connect_socket( const std::string &host, 
                                 const int port, 
                                 const std::string &bind_ip) 
 {
@@ -45,8 +46,7 @@ int MqttSocket::connect_socket( const std::string &host,
 
     status = getaddrinfo(host.c_str(), "1883", &hints, &servinf);
     if(status != 0) {
-//        std::cout << "Error resolving hostname" << std::endl;
-        exit(1);
+        return(SocketState::resolv_error);
     }
     // FIXME: Do proper error handling
     // FIXME: Walk through linked list of servinf's and look for
@@ -55,16 +55,18 @@ int MqttSocket::connect_socket( const std::string &host,
 
     sock = socket(servinf->ai_family, servinf->ai_socktype, servinf->ai_protocol);
     if (sock < 0) {
-//        std::cout << "Failed to acquire socket: " << strerror(errno) << std::endl;
-        exit(1);
+        return(SocketState::socket_error);
     }
 
     set_nonblock(sock);
 
     status = ::connect(sock, servinf->ai_addr, servinf->ai_addrlen);
+    if(status != 0) {
+        return(SocketState::connect_error);
+    }
     // FIXME: Do proper Error Handling
 
-    return 0;
+    return SocketState::tcp_connected;
 }
 
 int MqttSocket::send(const protocol::Message &msg) {
@@ -80,7 +82,7 @@ int MqttSocket::send(const protocol::Message &msg) {
 // this should be called cyclically from the global loop. It will do
 // all reception from a socket (or whatever), and will push new messages
 // received on the inbound message queue
-int MqttSocket::receive(std::queue<protocol::Message> &inqueue) {
+int MqttSocket::receive(std::deque<protocol::Message> &inqueue) {
     // FIXME: Do proper error handling and handling of incomplete
     // messages (kind of "suspend" reception of message, return
     // 0, and resume/complete reception on the next call
@@ -101,7 +103,7 @@ int MqttSocket::receive(std::queue<protocol::Message> &inqueue) {
             
     protocol::Message msg(buf);
 
-    inqueue.push(msg);
+    inqueue.push_back(msg);
     return 1;
 }
 

@@ -21,12 +21,20 @@
 
 #include "mqtt_311.h"
 
-#include <queue>
+#include <deque>
+#include <string>
 #include <cstring>
 #include <fcntl.h>
 
 namespace mqpp {
 namespace detail {
+
+enum class SocketState {
+    tcp_connected,
+    resolv_error,
+    socket_error,
+    connect_error
+};
 
 class MqttSocket {
 
@@ -34,12 +42,14 @@ class MqttSocket {
 
 public:
 
+    MqttSocket();
+
     /** 
      * try to establish a socket connection 
      * 
      * This will try to establish a socket (only). 
      * @return 0 if success, -1 on any error*/
-    int connect_socket( const std::string &host,
+    SocketState connect_socket( const std::string &host,
                         const int port,
                         const std::string &bind_ip);
 
@@ -60,7 +70,7 @@ public:
      *              message is completed, the loop mechanism can then decide wether
      *              to call receive() again or not. 0 if no more data seems to be
      *              waiting on the socket. */
-    int receive(std::queue<protocol::Message> &inqueue);
+    int receive(std::deque<protocol::Message> &inqueue);
 
 private:
 
@@ -82,7 +92,8 @@ private:
     }
 
     /**
-     * small helper function to make the socket nonblocking */
+     * small helper function to make the socket nonblocking
+     */
     inline int set_nonblock(const int socket) const {
         int flags;
         flags = fcntl(socket,F_GETFL,0);
